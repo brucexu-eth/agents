@@ -121,8 +121,8 @@ Returns `address`, `symbol`, `decimals`, `priceUSD`. Use it when a token is not 
    - `transactionRequest.chainId == action.fromChainId == fromChain`.
    - `transactionRequest.from` equals `walletAddress` (case-insensitive).
    - `transactionRequest.to` equals `estimate.approvalAddress` and equals the LI.FI Diamond `0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE`. Abort and warn if not.
-   - Native input: `transactionRequest.value` equals `fromAmount`. ERC-20 input: `transactionRequest.value` is `0x0`.
-6. Show the user: route (`tool`), amount sent, `estimate.toAmount` and `estimate.toAmountMin` on the destination chain, fees (`feeCosts`), estimated time (`executionDuration`), and the recipient. Ask for confirmation.
+   - `transactionRequest.value` equals the expected native amount: `fromAmount` for native input (`0` for ERC-20 input), plus the sum of every `estimate.feeCosts` entry whose `token.address` is the native token and whose `included` is `false`. Some bridges (for example Stargate's LayerZero fee) charge such a native fee on top of the transfer, so an ERC-20 transfer can carry a non-zero `value`.
+6. Show the user: route (`tool`), amount sent, `estimate.toAmount` and `estimate.toAmountMin` on the destination chain, fees (`feeCosts`, calling out any native fee paid on top of the amount sent), estimated time (`executionDuration`), and the recipient. Ask for confirmation.
 7. Build the `send_calls` batch (`## Submission`) and call `send_calls(chain, calls)` → approval URL + request ID.
 8. Present the approval link and wait for the user, per [../references/approval-mode.md](../references/approval-mode.md).
 9. `get_request_status(requestId)` once the user says they approved. Take the source-chain transaction hash from the result.
@@ -203,7 +203,7 @@ After `send_calls` returns, follow [../references/approval-mode.md](../reference
 
 1. `get_wallets` → address.
 2. `GET /v1/quote` — fromChain=`8453`, toChain=`42161`, fromToken and toToken = `0x0000000000000000000000000000000000000000`, fromAmount=`5000000000000000`.
-3. Check `transactionRequest.value` = `0x11c37937e08000` (= fromAmount); confirm with the user.
+3. Check `transactionRequest.value` = `0x11c37937e08000` (= fromAmount, for a route with no extra native fee); confirm with the user.
 4. `send_calls("base", [bridge_call])` — no approval for native input.
 
 **"Swap 20 USDT on Ethereum into USDC on Base"**
@@ -221,7 +221,7 @@ After `send_calls` returns, follow [../references/approval-mode.md](../reference
 - **Slippage** — The destination amount can be lower than `toAmount` when prices or bridge liquidity move. `toAmountMin` is the floor the route enforces. Default `slippage` to `0.005` for stablecoins and native-to-native bridges and `0.01` for routes that include a swap. Above `0.01`, state the value and ask the user to confirm. Above `0.05`, warn that the transfer can fill far below the quote and require the user to repeat the exact number. Never raise slippage silently after a failed quote.
 - **Irreversible** — A submitted bridge cannot be cancelled. Before `send_calls`, confirm the destination chain, the destination token and the recipient address. If the user names a recipient other than their own wallet, read the address back to them in full. If `GET /v1/status` returns `FAILED` or `REFUNDED`, report it and link `lifiExplorerLink`; do not resubmit automatically.
 - **Recipient on the destination chain** — Set `toAddress` explicitly. If the Wallet MCP account is a smart-contract account, the same address may not be deployed or controlled by the user on the destination chain. Unless the user confirms they control that address on the destination chain, ask them for the recipient.
-- **Fees** — Show every entry in `estimate.feeCosts` before confirmation, including the LI.FI fee.
+- **Fees** — Show every entry in `estimate.feeCosts` before confirmation, including the LI.FI fee. Entries with `included: false` are paid on top of the amount sent (in `transactionRequest.value` for a native fee), so the wallet needs enough native token for them plus gas.
 
 ## Notes
 
@@ -257,6 +257,6 @@ After `send_calls` returns, follow [../references/approval-mode.md](../reference
 **Gotchas:**
 
 - LI.FI takes numeric chain IDs; `send_calls` takes chain strings. Map both ways with the table above.
-- `transactionRequest.value` is hex already; do not hex-encode it again.
+- `transactionRequest.value` is hex already; do not hex-encode it again. It can be non-zero for ERC-20 input when the bridge charges a native fee (see the validation step in `## Orchestration`).
 - `estimate.executionDuration` is in seconds and is an estimate. Some routes take minutes; tell the user before they approve.
 - `GET /v1/status` may return `NOT_FOUND` for a short time after the source transaction confirms. Wait and check again; it is not a failure.
